@@ -97,6 +97,8 @@ TektronixOscilloscope::TektronixOscilloscope(SCPITransport* transport)
 		m_family = FAMILY_MSO5;
 	else if(m_model.find("MSO6") == 0)
 		m_family = FAMILY_MSO6;
+	else if(m_model.find("MDO4") == 0)
+		m_family = FAMILY_MDO4;
 	else
 		m_family = FAMILY_UNKNOWN;
 

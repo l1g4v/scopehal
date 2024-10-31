@@ -118,7 +118,7 @@ bool SCPILinuxGPIBTransport::SendCommand(const string& cmd)
 	return (ibcnt == (int)tempbuf.length());
 }
 
-string SCPILinuxGPIBTransport::ReadReply(bool endOnSemicolon)
+string SCPILinuxGPIBTransport::ReadReply(bool endOnSemicolon, std::function<void(float)> progress)
 {
 	string ret;
 	if (!IsConnected())

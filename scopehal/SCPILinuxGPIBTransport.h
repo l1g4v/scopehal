@@ -55,7 +55,8 @@ public:
 
 	void FlushRXBuffer(void) override;
 	bool SendCommand(const std::string& cmd) override;
-	std::string ReadReply(bool endOnSemicolon = true) override;
+	//std::string ReadReply(bool endOnSemicolon = true) override;
+	std::string ReadReply(bool endOnSemicolon = true, std::function<void(float)> progress = nullptr) override;
 	size_t ReadRawData(size_t len, unsigned char* buf, std::function<void(float)> progress = nullptr) override;
 	void SendRawData(size_t len, const unsigned char* buf) override;
 
