@@ -102,6 +102,7 @@ TektronixOscilloscope::TektronixOscilloscope(SCPITransport* transport)
 	else
 		m_family = FAMILY_UNKNOWN;
 
+	m_family = FAMILY_MDO4;
 	//Last digit of the model number is the number of channels
 	string model_number = m_model;
 	model_number.erase(
@@ -112,7 +113,7 @@ TektronixOscilloscope::TektronixOscilloscope(SCPITransport* transport)
 		),
 		model_number.end()
 	);
-	int nchans = stoi(model_number) % 10;
+	int nchans = 4;//stoi(model_number) % 10;
 
 	// No header in the reply of queries
 	m_transport->SendCommandQueued("HEAD 0");
@@ -202,7 +203,6 @@ TektronixOscilloscope::TektronixOscilloscope(SCPITransport* transport)
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
-		case FAMILY_MDO4:
 			for(size_t i=0; i<m_analogChannelCount; i++)
 			{
 				m_channels.push_back(
@@ -286,35 +286,45 @@ TektronixOscilloscope::TektronixOscilloscope(SCPITransport* transport)
 			break;
 	}
 
-	string reply = m_transport->SendCommandQueuedWithReply("LICENSE:APPID?", false);
-	reply = reply.substr(1, reply.size() - 2); // Chop off quotes
-	vector<string> apps;
-	stringstream s_stream(reply);
-	while(s_stream.good()) {
-		string substr;
-		getline(s_stream, substr, ',');
-		apps.push_back(substr);
+	switch(m_family){
+		case FAMILY_MSO5:
+		case FAMILY_MSO6:
+		{
+			string reply = m_transport->SendCommandQueuedWithReply("LICENSE:APPID?", false);
+			reply = reply.substr(1, reply.size() - 2); // Chop off quotes
+			vector<string> apps;
+			stringstream s_stream(reply);
+			while(s_stream.good()) {
+				string substr;
+				getline(s_stream, substr, ',');
+				apps.push_back(substr);
+			}
+
+			for (auto app : apps)
+			{
+				if (app == "DVM")
+				{
+					m_hasDVM = true;
+					LogDebug(" * Tek has DVM\n");
+				}
+				else if (app == "AFG")
+				{
+					m_hasAFG = true;
+					LogDebug(" * Tek has AFG\n");
+				}
+				else
+				{
+					LogDebug("(* Tek also has '%s' (ignored))\n", app.c_str());
+				}
+
+				// Bandwidth expanding options reflected in earlier query for max B/W
+			}
+			break;
+		}
+		default:
+		break;
 	}
 
-	for (auto app : apps)
-	{
-		if (app == "DVM")
-		{
-			m_hasDVM = true;
-			LogDebug(" * Tek has DVM\n");
-		}
-		else if (app == "AFG")
-		{
-			m_hasAFG = true;
-			LogDebug(" * Tek has AFG\n");
-		}
-		else
-		{
-			LogDebug("(* Tek also has '%s' (ignored))\n", app.c_str());
-		}
-
-		// Bandwidth expanding options reflected in earlier query for max B/W
-	}
 
 	//Add AWG channel
 	if(m_hasAFG)
@@ -565,7 +575,7 @@ bool TektronixOscilloscope::IsChannelEnabled(size_t i)
 			break;
 		case FAMILY_MDO4:
 			reply = m_transport->SendCommandQueuedWithReply(
-				string("SEL:CH") + ochan->GetHwname() + "?");
+				string("SEL:") + ochan->GetHwname() + "?");
 			break;
 		default:
 			break;
@@ -884,7 +894,6 @@ double TektronixOscilloscope::GetChannelAttenuation(size_t i)
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
-		case FAMILY_MDO4:
 			{
 				float probegain = stof(
 					m_transport->SendCommandQueuedWithReply(GetOscilloscopeChannel(i)->GetHwname() + ":PRO:GAIN?"));
@@ -898,7 +907,17 @@ double TektronixOscilloscope::GetChannelAttenuation(size_t i)
 				return atten;
 			}
 			break;
-
+		case FAMILY_MDO4:
+					{
+				float probegain = stof(
+					m_transport->SendCommandQueuedWithReply(GetOscilloscopeChannel(i)->GetHwname() + ":PRO:GAIN?"));
+				//Calculate the overall system attenuation.
+				//Note that probes report *gain* while the external is *attenuation*.
+				double atten = 1 / probegain;
+				m_channelAttenuations[i] = atten;
+				return atten;
+			}
+		break;
 		default:
 			// FIXME
 
@@ -1700,6 +1719,21 @@ bool TektronixOscilloscope::ReadPreamble(string& preamble_in, mso56_preamble& pr
 
 		if (read == 21) return true;
 	}
+	else if(semicolons == 21){ //MDO4000
+	/*1;8;BIN;RI;LSB;"Ch1, DC coupling, 40.00V/div, 4.000ms/d
+    iv, 1000 points, Sample mode";1000;Y;LINEA;"s";40.0000E-6;-20.0000E-3;0;"V";
+    1.6000;0.0E+0;0.0E+0;TIM;ANALOG;0.0E+0;0.0E+0;0.0E+0*/
+	char x[32];
+    read = sscanf(preamble_in.c_str(),
+        "%d;%d;%31[^;];%31[^;];%31[^;];%255[^;];%d;%c;%31[^;];%31[^;];"
+        "%lf;%lf;%d;%31[^;];%lf;%lf;%lf;%31[^;];%31[^;];%lf;%lf",
+        &p.byte_num, &p.bit_num, p.encoding, p.bin_format, p.byte_order, p.wfid,
+        &p.nr_pt, p.pt_fmt, x, p.xunit, &p.xincrement, &p.xzero,
+        &p.pt_off, p.yunit,	&p.ymult, &p.yoff, &p.yzero, p.domain, p.wfmtype, &p.centerfreq, &p.span);
+
+    if (read == 21) return true;
+
+	}
 	else
 		LogError("Unsupported preamble format (semicolons=%zu)\n", semicolons);
 
@@ -2466,8 +2500,8 @@ uint64_t TektronixOscilloscope::GetSampleRate()
 		case FAMILY_MDO4:
 			{
 				//MDO4 has a different command for sample rate
-				string reply = m_transport->SendCommandQueuedWithReply("ACQ:MAX:SAMPLER?");
-				m_sampleRate = stod(reply);
+				//string reply = m_transport->SendCommandQueuedWithReply("ACQ:MAX:SAMPLER?");
+				m_sampleRate = 5e9;//stod(reply);
 			}
 			break;
 
